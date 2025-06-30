@@ -17,7 +17,7 @@ __all__ = ['GP']
 
 class GP(Bivariate):
 
-    def __init__(self, g, loworder, highorder, kernel="RBF", nu=None, ci=68, error_model='informative'):
+    def __init__(self, g, loworder, highorder, kernel="RBF", nu=None, ci=68, error_model='informative', new=False):
 
         r'''
         A class that will pull from the Models class to perform GP emulation on 
@@ -47,6 +47,9 @@ class GP(Bivariate):
 
             error_model (str): The error model to be used in the calculation. 
                 Options are 'uninformative' and 'informative'. Default is 'informative'. 
+            
+            new (bool): Control variable for additional edits being made to the code
+                for the dissertation alterations. Default is False.
 
         Returns:
             None.
@@ -58,6 +61,9 @@ class GP(Bivariate):
         #extract uncertainty interval for later use
         self.ci = ci 
 
+        # extract the control variable 
+        self.new = new
+
         #check type and assign class variables
         if isinstance(loworder, float) == True or isinstance(loworder, int) == True:
             loworder = np.array([loworder])
@@ -68,17 +74,17 @@ class GP(Bivariate):
         self.loworder = loworder 
         self.highorder = highorder 
 
-        #Models(), Uncertainties()
+        # Models(), Uncertainties()
         self.m = Models(self.loworder, self.highorder)
         self.u = Uncertainties(error_model)
 
-        #instantiate the class variable error_model for ease class crossing
+        # instantiate the class variable error_model for ease class crossing
         self.error_model = self.u.error_model
 
-        #integral length
+        # integral length
         self.gint = np.empty([])
 
-        #kernel set-up for the rest of the class (one-dimensional)
+        # kernel set-up for the rest of the class (one-dimensional)
         kconstant = kernels.ConstantKernel(1.0)
 
         if kernel == "RBF":
@@ -165,7 +171,7 @@ class GP(Bivariate):
         return self.sk
 
 
-    def validate(self, plot=True, run_taweret=False):
+    def validate(self, plot=True, run_taweret=False, bars=True):
 
         r'''
         A wrapper function for scikit learn's GP prediction function. This will 
@@ -178,6 +184,9 @@ class GP(Bivariate):
         Parameters:
             plot (bool): The option to plot the GP mean and variance over the testing
                 set and true model. Default is True. 
+            
+            bars (bool): Whether to plot and show the error bands of
+                each training point or not. Default is True.
 
         Returns:
             meanp (numpy.ndarray): The mean array of the GP prediction results.
@@ -187,6 +196,9 @@ class GP(Bivariate):
             
             cov (numpy.ndarray): The covariance matrix of the GP prediction results. 
         '''
+
+        # save this control variable for later
+        self.bars = bars
 
         #make the prediction values into a column vector
         self.gpred = self.gpredict.reshape(-1,1)
@@ -212,7 +224,7 @@ class GP(Bivariate):
         if plot is True:
             self.plot_validate(intervals)
 
-        return self.meanp, self.sigp, self.cov
+        return self.meanp, self.sigp, self.cov   # this is it, this is the answer, not the PPD one
 
 
     def plot_training(self, gs, datas, sigmas):
@@ -289,7 +301,7 @@ class GP(Bivariate):
         Parameters:
             intervals (numpy.ndarray): The uncertainty band around the 
                 prediction set.
-
+            
         Returns:
             None.
         '''
@@ -311,16 +323,42 @@ class GP(Bivariate):
         ax.plot(self.gpredict, self.m.true_model(self.gpredict), 'k', label='True model')
 
         #plot the data
-        ax.errorbar(self.gtrlow, self.datatrlow, self.lowsigma, color="red", fmt='o', markersize=4, \
-            capsize=4, alpha = 0.4, label=r"$f_s$ ($N_s$ = {})".format(self.loworder[0]), zorder=1)
-        ax.errorbar(self.gtrhigh, self.datatrhigh, self.highsigma, color="blue", fmt='o', markersize=4, \
-             capsize=4, alpha=0.4, label=r"$f_l$ ($N_l$ = {})".format(self.highorder[0]), zorder=1)
+        if self.bars is True:
+            ax.errorbar(self.gtrlow, self.datatrlow, self.lowsigma, color="red", fmt='o', markersize=4, \
+                capsize=4, alpha = 0.4, label=r"$f_s$ ($N_s$ = {})".format(self.loworder[0]), zorder=1)
+            ax.errorbar(self.gtrhigh, self.datatrhigh, self.highsigma, color="blue", fmt='o', markersize=4, \
+                capsize=4, alpha=0.4, label=r"$f_l$ ($N_l$ = {})".format(self.highorder[0]), zorder=1)
+        else:
+            ax.errorbar(self.gs, self.datas, yerr=self.sigmas, color="red", fmt='o', markersize=4, \
+                capsize=4, label=r"Training data", zorder=10)
+            
+            # calculate intervals (could all be better but this isn't my focus anymore)
+            _, _, interval_low, interval_high = self.fdagger(self.gpredict)
+            
+            #plot the small-g expansions and error bands
+            for i,j in zip(range(len(self.loworder)), self.loworder):
+                ax.plot(self.gpredict, self.m.low_g(self.gpredict)[i,:], 'r--', label=r'$f_s$ ($N_s$ = {})'.format(j))
+            
+            for i in range(len(self.loworder)):
+                ax.plot(self.gpredict, interval_low[i, :, 0], 'r', linestyle='dotted', \
+                    label=r'$f_s$ ($N_s$ = {}) {}\% CI'.format(self.loworder[i], int(self.ci)))
+                ax.plot(self.gpredict, interval_low[i, :, 1], 'r', linestyle='dotted')
+
+            #for each large-g order, calculate and plot
+            for i,j in zip(range(len(self.highorder)), self.highorder):
+                ax.plot(self.gpredict, self.high_g(self.gpredict)[i,:], 'b--', label=r'$f_l$ ($N_l$ = {})'.format(j))
+            
+            for i in range(len(self.highorder)):
+                ax.plot(self.gpredict, interval_high[i, :, 0], 'b', linestyle='dotted', \
+                    label=r'$f_l$ ($N_l$ = {}) {}\% CI'.format(self.highorder[i], int(self.ci)))
+                ax.plot(self.gpredict, interval_high[i, :, 1], 'b', linestyle='dotted')
+            ax.set_xlim(0.0, max(self.gpredict)+0.01)
         ax.plot(self.gpred, self.meanp, 'g', label='Predictions', zorder=2)
         ax.plot(self.gpred, intervals[:,0], color='green', linestyle='dotted', label=r'{}$\%$ CI'.format(self.ci), zorder=2)
         ax.plot(self.gpred, intervals[:,1], color='green', linestyle='dotted', zorder=2)
         ax.fill_between(self.gpred[:,0], intervals[:,0], intervals[:,1], color='green', alpha=0.3, zorder=10)
 
-        ax.legend(fontsize=18, loc='upper right')
+        ax.legend(fontsize=14, loc='upper right')
         plt.show()
 
         #save figure option
@@ -330,7 +368,7 @@ class GP(Bivariate):
         #     name = input('Enter a file name (include .jpg, .png, etc.)')
         #     fig.savefig(name, bbox_inches='tight')
 
-        return None
+        return None   # again this is the true answer, use this for the thesis
 
     
     def training_set(self):
@@ -354,7 +392,7 @@ class GP(Bivariate):
             the training. 
         '''
 
-        #set up the training set from the prediction set (offset by midpoint)
+        #set up the training set from the prediction set (offset by midpoint)  # this should be fine
         self.midpoint = (self.gpredict[1] - self.gpredict[0]) / 2.0
         gtrainingset = np.linspace(min(self.gpredict)+self.midpoint, max(self.gpredict)+self.midpoint, len(self.gpredict))
     
@@ -388,61 +426,119 @@ class GP(Bivariate):
                 else:
                     break
            
-        #slice the training set for the two models
+        # slice the training set for the two models (this should be fine)
         self.gtrlow = gtrainingset[:lowindex]
         self.gtrhigh = gtrainingset[highindex:]
 
-        #calculate the data at each point
+        # calculate the data at each point
         self.datatrlow = self.m.low_g(self.gtrlow)[0,:]
         self.datatrhigh = self.m.high_g(self.gtrhigh)[0,:]
 
-        #calculate the variance at each point from the next term
+        # calculate the variance at each point from the next term
         lowvariance = self.u.variance_low(self.gtrlow, self.loworder[0])
         self.lowsigma = np.sqrt(lowvariance)
         highvariance = self.u.variance_high(self.gtrhigh, self.highorder[0])
         self.highsigma = np.sqrt(highvariance)
 
-        #find the values of g in the other set to determine location of points
+        # find the values of g in the other set to determine location of points
         index_ghigh = (np.where(self.gtrhigh == self.gtrlow[-1])[0])[0]
     
-        #value of g at the optimal red points
-        pt1 = 0.0656575
-        pt2 = 0.1161625
+        # value of g at the optimal red points
+        if self.new is False:
+            pt1 = 0.0656575
+            pt2 = 0.1161625
+        else:
+            pt1 = 0.02
+            pt2 = 0.08
+            pt3 = 0.12
 
-        #method 1: using g=0.6 as a training point
+        # method 1: using g=0.6 as a training point
         pttest = 0.6  
         indexptest = self.nearest_value(self.gtrhigh, pttest) 
 
-        #method 3: finding based on error (5%)
+        # method 2: finding based on error (2%)
         for i in range(len(self.gtrhigh)-1, -1, -1):
-            if self.highsigma[i] >= 0.05*self.datatrhigh[i]:
+            if self.highsigma[i] >= 0.02*self.datatrhigh[i]:
                 indexerror = i
                 break 
 
-        #find the values in the training array closest to the points
+        # find the values in the training array closest to the points (this is good regardless of what happens)
         indexpt1 = self.nearest_value(self.gtrlow, pt1)
         indexpt2 = self.nearest_value(self.gtrlow, pt2)
+        if self.new is True:
+            indexpt3 = self.nearest_value(self.gtrlow, pt3)
 
-        #create two points on either side (highpoint = 20)
-        glowtr = np.array([self.gtrlow[indexpt1], self.gtrlow[indexpt2]])
-        datalowtr = np.array([self.datatrlow[indexpt1], self.datatrlow[indexpt2]])
-        sigmalowtr = np.array([self.lowsigma[indexpt1], self.lowsigma[indexpt2]])
+        # create two points on either side (highpoint = 20)
+        if self.new is False:
+            glowtr = np.array([self.gtrlow[indexpt1], self.gtrlow[indexpt2]])
+            datalowtr = np.array([self.datatrlow[indexpt1], self.datatrlow[indexpt2]])
+            sigmalowtr = np.array([self.lowsigma[indexpt1], self.lowsigma[indexpt2]])
+        else:
+            glowtr = np.array([self.gtrlow[indexpt1], self.gtrlow[indexpt2], self.gtrlow[indexpt3]])
+            datalowtr = np.array([self.datatrlow[indexpt1], self.datatrlow[indexpt2], self.datatrlow[indexpt3]])
+            sigmalowtr = np.array([self.lowsigma[indexpt1], self.lowsigma[indexpt2], self.lowsigma[indexpt3]])
 
-        #choose training points depending on method entered
+        # choose training points depending on method entered (method 1 in thesis)
         if self.method == 1:
             ghightr = np.array([self.gtrhigh[indexptest], self.gtrhigh[-1]])
             datahightr = np.array([self.datatrhigh[indexptest], self.datatrhigh[-1]])
             sigmahightr = np.array([self.highsigma[indexptest], self.highsigma[-1]])
 
-        elif self.method == 2:
-            ghightr = np.array([self.gtrhigh[index_ghigh], self.gtrhigh[-1]])
-            datahightr = np.array([self.datatrhigh[index_ghigh], self.datatrhigh[-1]])
-            sigmahightr = np.array([self.highsigma[index_ghigh], self.highsigma[-1]])
+#         elif self.method == 2:
+#             if self.new is True:
+#                 newpt = self.gtrhigh[-1] - self.gtrhigh[index_ghigh]/4.0
+#                 indexnewpt = self.nearest_value(self.gtrhigh, newpt)
+#                 ghightr = np.array([self.gtrhigh[index_ghigh], self.gtrhigh[indexnewpt], self.gtrhigh[-1]])
+#                 datahightr = np.array([self.datatrhigh[index_ghigh], self.datatrhigh[indexnewpt], self.datatrhigh[-1]])
+#                 sigmahightr = np.array([self.highsigma[index_ghigh], self.highsigma[indexnewpt], self.highsigma[-1]])
+# #                 ghightr = np.array([self.gtrhigh[index_ghigh], self.gtrhigh[-1]])
+# #                 datahightr = np.array([self.datatrhigh[index_ghigh], self.datatrhigh[-1]])
+# #                 sigmahightr = np.array([self.highsigma[index_ghigh], self.highsigma[-1]])
 
+#             else:
+#                 ghightr = np.array([self.gtrhigh[index_ghigh], self.gtrhigh[-1]])
+#                 datahightr = np.array([self.datatrhigh[index_ghigh], self.datatrhigh[-1]])
+#                 sigmahightr = np.array([self.highsigma[index_ghigh], self.highsigma[-1]])
+
+        # method 2 in thesis
         elif self.method == 3:
-            ghightr = np.array([self.gtrhigh[indexerror], self.gtrhigh[-1]])
-            datahightr = np.array([self.datatrhigh[indexerror], self.datatrhigh[-1]])
-            sigmahightr = np.array([self.highsigma[indexerror], self.highsigma[-1]])
+            if self.new is True:
+                newpt = (self.gtrhigh[-1] - self.gtrhigh[indexerror])/2.0 + self.gtrhigh[indexerror]
+                indexnewpt = self.nearest_value(self.gtrhigh, newpt)
+                ghightr = np.array([self.gtrhigh[indexerror], self.gtrhigh[indexnewpt], self.gtrhigh[-1]])
+                datahightr = np.array([self.datatrhigh[indexerror], self.datatrhigh[indexnewpt], self.datatrhigh[-1]])
+                sigmahightr = np.array([self.highsigma[indexerror], self.highsigma[indexnewpt], self.highsigma[-1]])   
+            else:
+                ghightr = np.array([self.gtrhigh[indexerror], self.gtrhigh[-1]])
+                datahightr = np.array([self.datatrhigh[indexerror], self.datatrhigh[-1]])
+                sigmahightr = np.array([self.highsigma[indexerror], self.highsigma[-1]])   
+
+        # somewhere in the middle of the two points (method 3 in thesis)  --> this one we use?
+        elif self.method == 4:
+            indexfhigh = indexerror
+            fmiddle = (self.gtrhigh[-1] - self.gtrhigh[indexerror])/3.0 + self.gtrhigh[indexerror]
+            fmiddle2 = (self.gtrhigh[-1] - self.gtrhigh[indexerror])/3.0 + self.gtrhigh[indexerror] \
+               + (self.gtrhigh[-1] - self.gtrhigh[indexerror])/3.0
+            indexfmiddle = self.nearest_value(self.gtrhigh, fmiddle) 
+            indexfmiddle2 = self.nearest_value(self.gtrhigh, fmiddle2)
+            ghightr = np.array([self.gtrhigh[indexfhigh], \
+                                self.gtrhigh[indexfmiddle], self.gtrhigh[indexfmiddle2], self.gtrhigh[-1]])
+            datahightr = np.array([self.datatrhigh[indexfhigh], \
+                                   self.datatrhigh[indexfmiddle], self.datatrhigh[indexfmiddle2], self.datatrhigh[-1]])
+            sigmahightr = np.array([self.highsigma[indexfhigh], \
+                                    self.highsigma[indexfmiddle], self.highsigma[indexfmiddle2], self.highsigma[-1]]) 
+            
+#         elif self.method == 5:
+#             firsthigh = 0.6
+#             indexfhigh = self.nearest_value(self.gtrhigh, firsthigh)
+#             fmiddle = self.gtrhigh[-1] - self.gtrhigh[indexfhigh]/3.0  
+#             indexfmiddle = self.nearest_value(self.gtrhigh, fmiddle)
+#             ghightr = np.array([self.gtrhigh[indexfhigh], \
+#                                 self.gtrhigh[indexfmiddle], self.gtrhigh[-1]])
+#             datahightr = np.array([self.datatrhigh[indexfhigh], \
+#                                    self.datatrhigh[indexfmiddle], self.datatrhigh[-1]])
+#             sigmahightr = np.array([self.highsigma[indexfhigh], \
+#                                     self.highsigma[indexfmiddle], self.highsigma[-1]]) 
 
         #concatenate these arrays and send back
         gtr = np.concatenate((glowtr, ghightr))
