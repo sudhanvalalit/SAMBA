@@ -46,11 +46,20 @@ plugins:
     default_handler: python
     handlers:
       python:
-        setup_commands:
-          - import sys
-          - sys.path.append("samba")
-        rendering:
-          show_source: true
+        paths:
+            - samba
+          options:
+            show_source: true
+            show_bases: false
+            show_docstring_parameters: true
+            show_signature_annotations: true
+            merge_init_into_class: true
+            docstring_options:
+              ignore_init_summary: true
+            filters: ["!^_"]
+            extra:
+              render_module_root: true
+              render_submodules: true
 watch:
 - samba
 
