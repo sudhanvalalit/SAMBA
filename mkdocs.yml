@@ -47,7 +47,7 @@ plugins:
     handlers:
       python:
         paths:
-            - samba
+          - samba
           options:
             show_source: true
             show_bases: false
